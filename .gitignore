@@ -1,6 +1,0 @@
-.env
-quickmart.db
-quickmart.db-shm
-quickmart.db-wal
-public/uploads/*
-node_modules/
