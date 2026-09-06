@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Order Ticket — Quick M@rt</title><link rel="stylesheet" href="/style.css"></head><body><header><a class="logo" href="/">Quick M<span>@</span>rt</a><span class="sub">Order Support Ticket</span></header><main class="ticket"><div class="panel"><div id="info"></div><div id="payment"></div><div id="messages"></div><form onsubmit="send(event)"><input id="msg" placeholder="Message admin..."><button class="primary">Send</button></form><hr><h3>Payment Screenshot</h3><p class="muted">Pay only after admin sends/updates the QR and final amount.</p><form onsubmit="uploadShot(event)"><input id="shot" type="file" accept="image/*" required><button>Upload Payment Screenshot</button></form><p id="shotResult"></p></div></main><script>
+const token=location.pathname.split('/').pop();
+function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+async function load(){
+ let r=await fetch('/api/tickets/'+token),d=await r.json();
+ if(!r.ok)return document.querySelector('#info').innerHTML='<h2>Ticket not found</h2>';
+ const final=Number(d.ticket.final_total||d.order.total),discount=Number(d.ticket.discount||0);
+ document.querySelector('#info').innerHTML=`<h1>Order Ticket #${d.ticket.id}</h1><p><b>${esc(d.ticket.subject)}</b> · <b>${esc(d.ticket.status)}</b></p><p>Order #${d.order.id} · ${esc(d.order.product_name)} · Qty ${d.order.quantity}</p><div class="amount"><span>Original: ₹${Number(d.order.total).toFixed(2)}</span>${discount>0?`<span class="discount">Discount: −₹${discount.toFixed(2)}</span>`:''}<strong>Final Amount: ₹${final.toFixed(2)}</strong></div>`;
+ document.querySelector('#messages').innerHTML=d.messages.map(m=>`<div class="msg ${m.sender}"><b>${esc(m.sender)}</b><div>${esc(m.message)}</div><small>${esc(m.created_at||'')}</small></div>`).join('');
+ const qr=d.paymentQr;
+ document.querySelector('#payment').innerHTML=qr?`<div class="paymentbox"><h2>Pay ₹${final.toFixed(2)}</h2><p>Scan this QR after admin confirmation.</p><img class="qr" src="${esc(qr)}" alt="Payment QR"><p class="muted">After payment, upload your screenshot below.</p></div>`:`<div class="paymentbox pending"><h3>Payment QR pending</h3><p>Admin will send/update the QR in your ticket.</p></div>`;
+}
+async function send(e){e.preventDefault();let v=document.querySelector('#msg').value.trim();if(!v)return;await fetch('/api/tickets/'+token+'/messages',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({message:v})});document.querySelector('#msg').value='';load()}
+async function uploadShot(e){e.preventDefault();let f=document.querySelector('#shot').files[0];if(!f)return;let fd=new FormData();fd.append('screenshot',f);let r=await fetch('/api/tickets/'+token+'/payment-screenshot',{method:'POST',body:fd}),d=await r.json();document.querySelector('#shotResult').textContent=r.ok?'Screenshot uploaded. Admin will verify it.':(d.error||'Upload failed');if(r.ok)load()}
+load();setInterval(load,5000);
+</script></body></html>
