@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quick M@rt Admin</title>
+<link rel="stylesheet" href="/style.css">
+<style>
+#loginScreen{min-height:80vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.login-card{width:min(420px,100%);background:var(--panel,#fff);border:1px solid rgba(127,127,127,.2);border-radius:18px;padding:28px;box-shadow:0 12px 40px rgba(0,0,0,.12)}
+.login-card h1{margin:0 0 8px}.login-card p{opacity:.75}
+.login-card input{width:100%;box-sizing:border-box;margin:8px 0;padding:13px;border-radius:10px;border:1px solid #bbb}
+.login-card button{width:100%;margin-top:10px}
+.login-error{color:#d33;min-height:22px;margin-top:10px}
+#dashboard[hidden]{display:none}
+</style>
+</head>
+<body>
+<header>
+  <a class="logo" href="/">Quick M<span>@</span>rt</a>
+  <span class="sub">Professional Admin Dashboard</span>
+  <span id="badge" class="badge">0 open</span>
+</header>
+
+<section id="loginScreen">
+  <form id="loginForm" class="login-card">
+    <h1>Admin Login</h1>
+    <p>Enter your Quick M@rt admin credentials.</p>
+    <input id="adminUser" autocomplete="username" placeholder="Admin username" required>
+    <input id="adminPass" type="password" autocomplete="current-password" placeholder="Admin password" required>
+    <button class="primary" type="submit">Login</button>
+    <div id="loginError" class="login-error"></div>
+  </form>
+</section>
+
+<main id="dashboard" class="adminpage" hidden>
+<section class="panel">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+    <div><h2>Payment QR</h2><p class="muted">Upload the UPI/payment QR customers should scan.</p></div>
+    <button id="logoutBtn" type="button">Logout</button>
+  </div>
+  <form id="qrForm"><input id="qr" type="file" accept="image/*" required><button class="primary">Save Payment QR</button></form>
+  <p id="qrStatus"></p><img id="qrPreview" class="qr adminqr" style="display:none">
+</section>
+
+<section class="panel">
+  <h2>Add Product</h2>
+  <form id="productForm">
+    <input name="name" placeholder="Product name" required>
+    <textarea name="description" placeholder="Description"></textarea>
+    <input name="price" type="number" step="0.01" placeholder="Base price ₹" required>
+    <input name="stock" type="number" placeholder="Stock" value="0">
+    <input name="image" type="file" accept="image/*">
+    <button class="primary">Add Product</button>
+  </form>
+</section>
+
+<section class="panel"><h2>Products</h2><div id="plist"></div></section>
+<section class="panel"><h2>Order Tickets</h2><div id="tlist"></div><div id="thread"></div></section>
+</main>
+
+<script>
+let auth = null;
+let busy = false;
+
+const $ = id => document.getElementById(id);
+const loginScreen = $('loginScreen');
+const dashboard = $('dashboard');
+const loginForm = $('loginForm');
+const loginError = $('loginError');
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g,m=>({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  }[m]));
+}
+
+function showLogin(message=''){
+  auth = null;
+  dashboard.hidden = true;
+  loginScreen.style.display = 'flex';
+  loginError.textContent = message;
+  $('adminPass').value = '';
+}
+
+function showDashboard(){
+  loginScreen.style.display = 'none';
+  dashboard.hidden = false;
+}
+
+async function api(url, options={}){
+  if(!auth) throw new Error('Please login first.');
+  const headers = {...(options.headers||{}), Authorization: auth};
+  const response = await fetch(url, {...options, headers});
+  if(response.status === 401 || response.status === 403){
+    showLogin('Wrong or expired admin credentials.');
+    throw new Error('Admin authentication failed');
+  }
+  return response;
+}
+
+loginForm.addEventListener('submit', async e=>{
+  e.preventDefault();
+  if(busy) return;
+  busy = true;
+  loginError.textContent = 'Checking credentials...';
+
+  const user = $('adminUser').value.trim();
+  const pass = $('adminPass').value;
+  auth = 'Basic ' + btoa(unescape(encodeURIComponent(user + ':' + pass)));
+
+  try{
+    const r = await fetch('/api/admin/tickets', {
+      headers:{Authorization:auth}
+    });
+    if(!r.ok){
+      auth = null;
+      loginError.textContent = r.status === 403
+        ? 'Wrong admin username or password.'
+        : 'Admin login failed. Please try again.';
+      $('adminPass').value = '';
+      return;
+    }
+    showDashboard();
+    await Promise.all([products(), tickets(), loadQr()]);
+  }catch(err){
+    auth = null;
+    loginError.textContent = 'Connection error. Please try again.';
+  }finally{
+    busy = false;
+  }
+});
+
+$('logoutBtn').onclick = ()=>{
+  showLogin('Logged out.');
+  $('adminUser').focus();
+};
+
+async function products(){
+  const r = await api('/api/products');
+  const a = await r.json();
+  $('plist').innerHTML = a.map(p=>`
+    <div class="adminrow">
+      <div><b>${esc(p.name)}</b><div class="muted">₹${Number(p.price).toFixed(2)} · stock ${p.stock}</div></div>
+      <span><button onclick="editP(${p.id})">✏️ Edit</button> <button onclick="delP(${p.id})">🗑️ Delete</button></span>
+    </div>`).join('') || '<p class="muted">No products.</p>';
+}
+
+$('productForm').onsubmit = async e=>{
+  e.preventDefault();
+  const r = await api('/api/products',{method:'POST',body:new FormData(e.currentTarget)});
+  const d = await r.json();
+  if(!r.ok) return alert(d.error || 'Unable to add product');
+  e.currentTarget.reset();
+  products();
+};
+
+async function editP(id){
+  const a = await (await api('/api/products')).json();
+  const p = a.find(x=>x.id==id);
+  if(!p) return;
+
+  const name = prompt('Product name',p.name); if(name===null)return;
+  const description = prompt('Description',p.description||''); if(description===null)return;
+  const price = prompt('Price in INR',p.price); if(price===null)return;
+  const stock = prompt('Stock',p.stock); if(stock===null)return;
+
+  const fd = new FormData();
+  fd.append('name',name);
+  fd.append('description',description);
+  fd.append('price',price);
+  fd.append('stock',stock);
+  fd.append('keepImage','true');
+
+  const r = await api('/api/products/'+id,{method:'PUT',body:fd});
+  const d = await r.json();
+  if(!r.ok) alert(d.error || 'Unable to update product');
+  products();
+}
+
+async function delP(id){
+  if(!confirm('Delete this product?')) return;
+  const r = await api('/api/products/'+id,{method:'DELETE'});
+  if(!r.ok){ const d=await r.json(); return alert(d.error||'Delete failed'); }
+  products();
+}
+
+async function tickets(){
+  const r = await api('/api/admin/tickets');
+  const a = await r.json();
+  const open = a.filter(t=>t.status==='Open').length;
+  $('badge').textContent = open+' open';
+  $('tlist').innerHTML = a.map(t=>`
+    <div class="adminrow">
+      <span><b>#${t.id}</b> · 👤 ${esc(t.username||'Unknown')} · ${esc(t.product_name)} ×${t.quantity} · ${esc(t.status)} · ₹${Number(t.final_total||t.total).toFixed(2)} ${t.payment_screenshot?'📷':''}</span>
+      <button onclick="openT(${t.id})">Open Chat</button>
+    </div>`).join('') || '<p class="muted">No tickets yet.</p>';
+}
+
+async function openT(id){
+  const d = await (await api('/api/admin/tickets/'+id)).json();
+  const t=d.ticket, o=d.order;
+  const discount=Number(t.discount||0), final=Number(t.final_total||o.total);
+
+  $('thread').innerHTML=`
+    <h3>🎫 Ticket #${t.id} · 👤 ${esc(t.username||'Unknown')}</h3>
+    <p>Order #${o.id} · ${esc(o.product_name)} · Qty ${o.quantity}</p>
+    <p>Original ₹${Number(o.total).toFixed(2)} · Discount ₹${discount.toFixed(2)} · <b>Final ₹${final.toFixed(2)}</b></p>
+    ${t.payment_screenshot?`<div><b>Payment screenshot:</b><br><img class="shot" src="${esc(t.payment_screenshot)}"></div>`:''}
+    <div id="threadMsgs">${d.messages.map(m=>`
+      <div class="msg ${esc(m.sender)}">
+        <b>${m.sender==='customer'?'👤 '+esc(t.username||'Customer'):m.sender==='admin'?'🛡️ Admin':'⚙️ System'}</b>
+        <div>${esc(m.message)}</div><small>${esc(m.created_at||'')}</small>
+      </div>`).join('')}</div>
+    <div class="admin-actions">
+      <input id="disc" type="number" min="0" step="0.01" placeholder="Discount ₹" value="${discount}">
+      <button onclick="setDiscount(${id})">Apply Discount</button>
+      <input id="reply" placeholder="Message ${esc(t.username||'customer')}">
+      <button class="primary" onclick="replyT(${id})">Send Message</button>
+      <select id="st">
+        <option ${t.status==='Open'?'selected':''}>Open</option>
+        <option ${t.status==='Processing'?'selected':''}>Processing</option>
+        <option ${t.status==='Completed'?'selected':''}>Completed</option>
+        <option ${t.status==='Closed'?'selected':''}>Closed</option>
+      </select>
+      <button onclick="statusT(${id})">Update Status</button>
+      <button class="primary" onclick="paidT(${id})">✓ Payment Received / Complete</button>
+    </div>`;
+}
+
+async function replyT(id){
+  const v=document.querySelector('#reply').value.trim();
+  if(!v)return;
+  const r=await api('/api/admin/tickets/'+id+'/reply',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({message:v})
+  });
+  if(!r.ok){const d=await r.json();return alert(d.error||'Reply failed');}
+  openT(id);
+}
+
+async function setDiscount(id){
+  const v=Number(document.querySelector('#disc').value)||0;
+  const r=await api('/api/admin/tickets/'+id+'/discount',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({discount:v})
+  });
+  const d=await r.json();
+  if(!r.ok)return alert(d.error||'Discount failed');
+  openT(id);
+}
+
+async function statusT(id){
+  const r=await api('/api/admin/tickets/'+id+'/status',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({status:document.querySelector('#st').value})
+  });
+  if(!r.ok){const d=await r.json();return alert(d.error||'Status update failed');}
+  tickets(); openT(id);
+}
+
+async function paidT(id){
+  const r=await api('/api/admin/tickets/'+id+'/paid',{method:'POST'});
+  const d=await r.json();
+  if(!r.ok)return alert(d.error||'Payment update failed');
+  tickets(); openT(id);
+}
+
+$('qrForm').onsubmit=async e=>{
+  e.preventDefault();
+  const f=new FormData();
+  f.append('qr',$('qr').files[0]);
+  const r=await api('/api/admin/qr',{method:'POST',body:f});
+  const d=await r.json();
+  $('qrStatus').textContent=r.ok?'QR saved successfully.':d.error||'Upload failed';
+  if(r.ok)loadQr();
+};
+
+async function loadQr(){
+  const r=await api('/api/admin/qr');
+  const d=await r.json();
+  if(d.file){
+    $('qrPreview').src=d.file;
+    $('qrPreview').style.display='block';
+  }
+}
+
+setInterval(()=>{
+  if(auth && !dashboard.hidden) tickets().catch(()=>{});
+},5000);
+</script>
+</body>
+</html>
