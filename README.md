@@ -1,22 +1,26 @@
-# Quick M@rt — Manual QR Payment + Ticket System
+# Quick M@rt — Global Marketplace Upgrade
 
-Razorpay has been removed from the payment flow.
+## Included
+- Username + email + password registration/login. No Google/Gmail verification is required; an address such as `zaid@bro.com` is accepted.
+- Username is saved with every order and is shown in the ticket/chat.
+- Discord-inspired ticket chat UI with customer/staff message bubbles, status and payment area.
+- Admin can add, edit and delete products, including price, stock, description and image.
+- Country selector with automatic browser-country guess and manual override.
+- Local-currency price display across the storefront and ticket. The included exchange table is a simple client-side rate table; update rates periodically for production billing.
+- Multi-language interface with a broad set of common world languages and an expandable translation structure.
+- Existing manual QR payment flow remains intact.
 
-Flow:
-1. Customer clicks Order Now.
-2. A ticket is created immediately.
-3. Admin sees the new ticket in Admin Dashboard.
-4. Admin can send messages and apply a discount.
-5. Admin uploads one payment QR in the Admin Dashboard.
-6. Customer sees the final amount + QR inside the ticket.
-7. Customer pays by UPI and uploads a payment screenshot.
-8. Admin verifies it and clicks “Payment Received / Complete”.
-9. Stock is reduced only after admin marks payment received.
+## Render
+Build Command:
+`npm install`
 
-Render:
-- Build Command: npm install
-- Start Command: node server.js
-- Add environment variables:
-  ADMIN_USER=your-admin-username
-  ADMIN_PASSWORD=your-strong-password
-  DISCORD_WEBHOOK_URL=optional
+Start Command:
+`node server.js`
+
+Environment variables:
+`ADMIN_USER=your-admin-username`
+`ADMIN_PASSWORD=your-strong-password`
+`DISCORD_WEBHOOK_URL=optional`
+
+## Important production note
+The storefront currency conversion is for display and ticket presentation. The current manual QR/UPI payment flow remains based on your existing INR price. If you want true multi-currency card checkout, that requires a payment provider/account configured for the target currencies and should be implemented separately.
